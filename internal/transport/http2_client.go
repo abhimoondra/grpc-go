@@ -206,6 +206,7 @@ func isTemporary(err error) bool {
 func NewHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts ConnectOptions, onClose func(GoAwayReason)) (_ ClientTransport, err error) {
 	scheme := "http"
 	ctx, cancel := context.WithCancel(ctx)
+
 	defer func() {
 		if err != nil {
 			cancel()
@@ -401,6 +402,7 @@ func NewHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 		go t.keepalive()
 	}
 
+	fmt.Printf("custom log: Initializing HTTP/2 client transport for server: %s, address: %s \n", addr.ServerName, addr.Addr)
 	// Start the reader goroutine for incoming messages. Each transport has a
 	// dedicated goroutine which reads HTTP2 frames from the network. Then it
 	// dispatches the frame to the corresponding stream entity.  When the
@@ -408,7 +410,7 @@ func NewHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	// first, an error is pushed to the channel.  This must be checked before
 	// returning from this function.
 	readerErrCh := make(chan error, 1)
-	go t.reader(readerErrCh)
+	go t.reader(readerErrCh, addr.ServerName, addr.Addr)
 	defer func() {
 		if err != nil {
 			// writerDone should be closed since the loopy goroutine
@@ -1262,13 +1264,14 @@ func (t *http2Client) handleRSTStream(f *http2.RSTStreamFrame) {
 	t.closeStream(s, st.Err(), false, http2.ErrCodeNo, st, nil, false)
 }
 
-func (t *http2Client) handleSettings(f *http2.SettingsFrame, isFirst bool) {
+func (t *http2Client) handleSettings(f *http2.SettingsFrame, isFirst bool, name string, addr string) {
 	if f.IsAck() {
 		return
 	}
 	var maxStreams *uint32
 	var ss []http2.Setting
 	var updateFuncs []func()
+	fmt.Printf("custom log: updaing transport settings for server: %s, address: %s, isFirst : %s \n", name, addr, isFirst)
 	f.ForeachSetting(func(s http2.Setting) error {
 		switch s.ID {
 		case http2.SettingMaxConcurrentStreams:
@@ -1276,6 +1279,7 @@ func (t *http2Client) handleSettings(f *http2.SettingsFrame, isFirst bool) {
 			*maxStreams = s.Val
 		case http2.SettingMaxHeaderListSize:
 			updateFuncs = append(updateFuncs, func() {
+				fmt.Printf("custom log: updaing header for server: %s, address: %s, value: %d \n", name, addr, s.Val)
 				t.maxSendHeaderListSize = new(uint32)
 				*t.maxSendHeaderListSize = s.Val
 			})
@@ -1616,7 +1620,7 @@ func (t *http2Client) operateHeaders(frame *http2.MetaHeadersFrame) {
 
 // readServerPreface reads and handles the initial settings frame from the
 // server.
-func (t *http2Client) readServerPreface() error {
+func (t *http2Client) readServerPreface(name string, addr string) error {
 	frame, err := t.framer.fr.ReadFrame()
 	if err != nil {
 		return connectionErrorf(true, err, "error reading server preface: %v", err)
@@ -1625,14 +1629,14 @@ func (t *http2Client) readServerPreface() error {
 	if !ok {
 		return connectionErrorf(true, nil, "initial http2 frame from server is not a settings frame: %T", frame)
 	}
-	t.handleSettings(sf, true)
+	t.handleSettings(sf, true, name, addr)
 	return nil
 }
 
 // reader verifies the server preface and reads all subsequent data from
 // network connection.  If the server preface is not read successfully, an
 // error is pushed to errCh; otherwise errCh is closed with no error.
-func (t *http2Client) reader(errCh chan<- error) {
+func (t *http2Client) reader(errCh chan<- error, name string, addr string) {
 	var errClose error
 	defer func() {
 		close(t.readerDone)
@@ -1641,7 +1645,7 @@ func (t *http2Client) reader(errCh chan<- error) {
 		}
 	}()
 
-	if err := t.readServerPreface(); err != nil {
+	if err := t.readServerPreface(name, addr); err != nil {
 		errCh <- err
 		return
 	}
@@ -1691,7 +1695,7 @@ func (t *http2Client) reader(errCh chan<- error) {
 		case *http2.RSTStreamFrame:
 			t.handleRSTStream(frame)
 		case *http2.SettingsFrame:
-			t.handleSettings(frame, false)
+			t.handleSettings(frame, false, name, addr)
 		case *http2.PingFrame:
 			t.handlePing(frame)
 		case *http2.GoAwayFrame:
