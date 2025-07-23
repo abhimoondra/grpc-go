@@ -390,6 +390,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 		go t.keepalive()
 	}
 
+	fmt.Printf("Initializing HTTP/2 client transport for server: %s, address: %s", addr.ServerName, addr.Addr)
 	// Start the reader goroutine for incoming messages. Each transport has a
 	// dedicated goroutine which reads HTTP2 frames from the network. Then it
 	// dispatches the frame to the corresponding stream entity.  When the
@@ -1203,7 +1204,7 @@ func (t *http2Client) handleSettings(f *http2.SettingsFrame, isFirst bool, name 
 	var maxStreams *uint32
 	var ss []http2.Setting
 	var updateFuncs []func()
-	logger.Info("updaing transport settings for server: %s, address: %s, isFirst : %s", name, addr, isFirst)
+	fmt.Printf("updaing transport settings for server: %s, address: %s, isFirst : %s \n", name, addr, isFirst)
 	f.ForeachSetting(func(s http2.Setting) error {
 		switch s.ID {
 		case http2.SettingMaxConcurrentStreams:
@@ -1211,7 +1212,7 @@ func (t *http2Client) handleSettings(f *http2.SettingsFrame, isFirst bool, name 
 			*maxStreams = s.Val
 		case http2.SettingMaxHeaderListSize:
 			updateFuncs = append(updateFuncs, func() {
-				logger.Info("updaing header for server: %s, address: %s, value: %s", name, addr)
+				fmt.Printf("updaing header for server: %s, address: %s, value: %s", name, addr)
 				t.maxSendHeaderListSize = new(uint32)
 				*t.maxSendHeaderListSize = s.Val
 			})
